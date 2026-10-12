@@ -34,6 +34,10 @@ class ParametreEntreprise extends Model
         'duree_session',
         'notifications_systeme',
         'notifications_email',
+        'periodicite_rapports',
+        'delai_soumission_rapports',
+        'rappels_rapports',
+        'niveaux_validation_rapports',
         'statut',
     ];
 
@@ -46,6 +50,15 @@ class ParametreEntreprise extends Model
 
         'notifications_email' =>
             'boolean',
+
+        'delai_soumission_rapports' =>
+            'integer',
+
+        'rappels_rapports' =>
+            'boolean',
+
+        'niveaux_validation_rapports' =>
+            'integer',
 
         'statut' =>
             'boolean',

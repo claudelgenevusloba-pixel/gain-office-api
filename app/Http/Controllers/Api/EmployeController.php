@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
+use App\Support\RolePermissions;
 use Throwable;
 
 class EmployeController extends Controller
@@ -21,6 +22,7 @@ class EmployeController extends Controller
     {
         $employes = Employe::with([
             'utilisateur.role',
+            'utilisateur.superieur:id_utilisateur,nom,prenom',
             'poste.service',
         ])
         ->orderByDesc('id_employe')
@@ -63,6 +65,11 @@ class EmployeController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        RolePermissions::exiger(
+            $request->user(),
+            'creer_employe'
+        );
+
         $validated = $request->validate([
             'id_role' => ['required', 'integer', 'exists:roles,id_role'],
             'id_poste' => ['required', 'integer', 'exists:postes,id_poste'],
@@ -131,6 +138,11 @@ class EmployeController extends Controller
      */
     public function update(Request $request, int $id): JsonResponse
     {
+        RolePermissions::exiger(
+            $request->user(),
+            'modifier_employe'
+        );
+
         $employe = Employe::with('utilisateur')->find($id);
 
         if (!$employe) {
@@ -143,6 +155,18 @@ class EmployeController extends Controller
         $validated = $request->validate([
             'id_role' => ['sometimes', 'integer', 'exists:roles,id_role'],
             'id_poste' => ['sometimes', 'integer', 'exists:postes,id_poste'],
+
+            /*
+             * Supérieur hiérarchique direct — désigné par le RH.
+             * null = aucun rattachement (le rapport affichera
+             * l'absence de supérieur côté soumission).
+             */
+            'id_responsable' => [
+                'nullable',
+                'integer',
+                'exists:utilisateurs,id_utilisateur',
+                'neq:' . $employe->id_utilisateur,
+            ],
 
             'nom' => ['sometimes', 'string', 'max:100'],
             'prenom' => ['sometimes', 'string', 'max:100'],
@@ -185,6 +209,7 @@ class EmployeController extends Controller
 
                 foreach ([
                     'id_role',
+                    'id_responsable',
                     'nom',
                     'prenom',
                     'email',
@@ -251,8 +276,13 @@ class EmployeController extends Controller
      * On évite la suppression physique afin de conserver
      * l'historique de GAIN OFFICE.
      */
-    public function destroy(int $id): JsonResponse
+    public function destroy(Request $request, int $id): JsonResponse
     {
+        RolePermissions::exiger(
+            $request->user(),
+            'supprimer_employe'
+        );
+
         $employe = Employe::with('utilisateur')->find($id);
 
         if (!$employe) {

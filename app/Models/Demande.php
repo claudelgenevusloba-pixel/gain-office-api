@@ -32,13 +32,16 @@ class Demande extends Model
     protected function casts(): array
     {
         return [
-            'date_demande' =>
-                'datetime',
-
-            'date_traitement' =>
-                'datetime',
+            'date_demande' => 'datetime',
+            'date_traitement' => 'datetime',
         ];
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | RELATIONS
+    |--------------------------------------------------------------------------
+    */
 
     public function demandeur()
     {
@@ -56,5 +59,51 @@ class Demande extends Model
             'id_traiteur',
             'id_utilisateur'
         );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | LIBELLÉ DU TYPE
+    |--------------------------------------------------------------------------
+    */
+
+    public function getTypeLibelleAttribute(): string
+    {
+        return match ($this->type_demande) {
+            'conge' => 'Congé',
+            'permission' => 'Permission',
+            'absence' => 'Absence',
+            'avance' => 'Avance / Acompte',
+            'achat' => 'Demande d’achat',
+            'materiel' => 'Matériel',
+            'support_informatique' => 'Support informatique',
+            'mission' => 'Mission / Déplacement',
+            'document_administratif' => 'Document administratif',
+            'fournitures' => 'Fournitures',
+            'recrutement' => 'Recrutement',
+            'autre' => 'Autre',
+            default => ucfirst(
+                str_replace('_', ' ', $this->type_demande)
+            ),
+        };
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | LIBELLÉ DU STATUT
+    |--------------------------------------------------------------------------
+    */
+
+    public function getStatutLibelleAttribute(): string
+    {
+        return match ($this->statut) {
+            'en_attente' => 'En attente',
+            'acceptee' => 'Acceptée',
+            'refusee' => 'Refusée',
+            'annulee' => 'Annulée',
+            default => ucfirst(
+                str_replace('_', ' ', $this->statut)
+            ),
+        };
     }
 }

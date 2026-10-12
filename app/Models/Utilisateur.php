@@ -21,9 +21,11 @@ class Utilisateur extends Authenticatable
 
     protected $fillable = [
         'id_role',
+        'id_responsable',
         'nom',
         'prenom',
         'email',
+        'email_personnel',
         'telephone',
         'mot_de_passe',
         'photo',
@@ -69,6 +71,42 @@ class Utilisateur extends Authenticatable
             Role::class,
             'id_role',
             'id_role'
+        );
+    }
+
+    /**
+     * Supérieur hiérarchique direct (désigné par le RH).
+     */
+    public function superieur()
+    {
+        return $this->belongsTo(
+            Utilisateur::class,
+            'id_responsable',
+            'id_utilisateur'
+        );
+    }
+
+    /**
+     * Personnes dont cet utilisateur est le supérieur direct.
+     */
+    public function subordonnes()
+    {
+        return $this->hasMany(
+            Utilisateur::class,
+            'id_responsable',
+            'id_utilisateur'
+        );
+    }
+
+    /**
+     * Rapports dont cet utilisateur est le supérieur destinataire.
+     */
+    public function rapportsRecus()
+    {
+        return $this->hasMany(
+            RapportTache::class,
+            'id_destinataire',
+            'id_utilisateur'
         );
     }
 

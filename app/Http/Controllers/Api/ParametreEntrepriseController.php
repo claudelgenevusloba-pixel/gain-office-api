@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\ParametreEntreprise;
+use App\Support\RolePermissions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -44,6 +45,11 @@ class ParametreEntrepriseController extends Controller
     public function store(
         Request $request
     ): JsonResponse {
+        RolePermissions::exiger(
+            $request->user(),
+            'modifier_parametres'
+        );
+
         $validator = Validator::make(
             $request->all(),
             [
@@ -94,6 +100,22 @@ class ParametreEntrepriseController extends Controller
 
                 'notifications_email' =>
                     'nullable|boolean',
+
+                /*
+                 * Rapports périodiques — configuration
+                 * optionnelle : null = non définie.
+                 */
+                'periodicite_rapports' =>
+                    'nullable|in:quotidienne,hebdomadaire,mensuelle',
+
+                'delai_soumission_rapports' =>
+                    'nullable|integer|min:1|max:365',
+
+                'rappels_rapports' =>
+                    'nullable|boolean',
+
+                'niveaux_validation_rapports' =>
+                    'nullable|integer|min:1|max:5',
 
                 'statut' =>
                     'nullable|boolean',

@@ -56,6 +56,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Frontend URL
+    |--------------------------------------------------------------------------
+    |
+    | URL du frontend React utilisée pour générer les liens d'activation
+    | (QR code / invitation). En test sur le même Wi-Fi, cette valeur
+    | pointe vers l'IP locale de la machine (voir FRONTEND_URL dans .env).
+    |
+    */
+
+    'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |

@@ -18,17 +18,6 @@ return new class extends Migration
 
             $table->text('description')->nullable();
 
-            /*
-             * Plus le niveau est petit, plus le rôle est élevé.
-             *
-             * Exemple :
-             * 1 = Directeur
-             * 2 = Sous-directeur
-             * 3 = RH
-             * 4 = Responsable
-             * 5 = Employé
-             */
-            $table->unsignedInteger('niveau_hierarchique')->default(99);
 
             $table->enum('statut', [
                 'actif',

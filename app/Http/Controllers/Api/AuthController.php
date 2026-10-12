@@ -92,6 +92,52 @@ class AuthController extends Controller
     }
 
     /**
+     * Changer le mot de passe de l'utilisateur connecté.
+     */
+    public function changerMotDePasse(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'ancien_mot_de_passe' => ['required', 'string'],
+            'nouveau_mot_de_passe' => [
+                'required',
+                'string',
+                'min:8',
+                'confirmed',
+            ],
+        ]);
+
+        $utilisateur = $request->user();
+
+        if (
+            !Hash::check(
+                $validated['ancien_mot_de_passe'],
+                $utilisateur->mot_de_passe
+            )
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Votre mot de passe actuel est incorrect.',
+                'errors' => [
+                    'ancien_mot_de_passe' => [
+                        'Votre mot de passe actuel est incorrect.',
+                    ],
+                ],
+            ], 422);
+        }
+
+        $utilisateur->mot_de_passe = Hash::make(
+            $validated['nouveau_mot_de_passe']
+        );
+
+        $utilisateur->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Votre mot de passe a été modifié avec succès.',
+        ]);
+    }
+
+    /**
      * Déconnexion de l'utilisateur.
      */
     public function logout(Request $request): JsonResponse
