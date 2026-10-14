@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Mail\InvitationEmploye;
 use App\Models\Employe;
 use App\Models\Invitation;
 use App\Models\Utilisateur;
@@ -11,13 +12,16 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
+use Throwable;
 
 class InvitationController extends Controller
 {
     /**
-     * Créer un nouvel employé et générer son invitation.
+     * Créer un employé et lui envoyer une invitation.
      */
     public function store(Request $request): JsonResponse
     {
@@ -31,29 +35,21 @@ class InvitationController extends Controller
             'prenom' => ['required', 'string', 'max:100'],
             'email' => ['required', 'email', 'max:150'],
             'telephone' => ['nullable', 'string', 'max:30'],
-
             'id_role' => [
                 'required',
                 'integer',
                 Rule::exists('roles', 'id_role'),
             ],
-
             'id_poste' => [
                 'required',
                 'integer',
                 Rule::exists('postes', 'id_poste'),
             ],
-
             'matricule' => ['nullable', 'string', 'max:50'],
             'date_embauche' => ['nullable', 'date'],
             'date_naissance' => ['nullable', 'date'],
             'adresse' => ['nullable', 'string', 'max:255'],
             'ville' => ['nullable', 'string', 'max:100'],
-
-            /*
-             * Supérieur hiérarchique direct —
-             * désigné par le RH à la création.
-             */
             'id_responsable' => [
                 'nullable',
                 'integer',
@@ -61,70 +57,32 @@ class InvitationController extends Controller
             ],
         ]);
 
-        $email = strtolower(trim($validated['email']));
+        $validated['email'] = strtolower(trim($validated['email']));
 
-        /*
-        |--------------------------------------------------------------------------
-        | Vérifier si l'adresse existe déjà
-        |--------------------------------------------------------------------------
-        */
-
-        if (Utilisateur::where('email', $email)->exists()) {
-            return response()->json([
-                'message' => 'Un utilisateur existe déjà avec cette adresse email.'
-            ], 422);
+        if (Utilisateur::where('email', $validated['email'])->exists()) {
+            throw ValidationException::withMessages([
+                'email' => [
+                    'Cette adresse e-mail est déjà utilisée.',
+                ],
+            ]);
         }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Générer le token d'invitation
-        |--------------------------------------------------------------------------
-        */
 
         $token = Str::random(64);
 
-        /*
-        |--------------------------------------------------------------------------
-        | Création transactionnelle
-        |--------------------------------------------------------------------------
-        */
-
         $resultat = DB::transaction(function () use (
             $validated,
-            $email,
             $token
         ) {
-
-            /*
-            |--------------------------------------------------------------------------
-            | 1. Création de l'utilisateur
-            |--------------------------------------------------------------------------
-            */
-
             $utilisateur = Utilisateur::create([
                 'id_role' => $validated['id_role'],
-                'id_responsable' =>
-                    $validated['id_responsable'] ?? null,
-                'nom' => $validated['nom'],
-                'prenom' => $validated['prenom'],
-                'email' => $email,
+                'id_responsable' => $validated['id_responsable'] ?? null,
+                'nom' => trim($validated['nom']),
+                'prenom' => trim($validated['prenom']),
+                'email' => $validated['email'],
                 'telephone' => $validated['telephone'] ?? null,
-
-                /*
-                 * Mot de passe temporaire.
-                 * L'employé choisira son vrai mot de passe
-                 * lors de l'activation.
-                 */
                 'mot_de_passe' => Hash::make(Str::random(80)),
-
-               'statut' => 'inactif',
+                'statut' => 'inactif',
             ]);
-
-            /*
-            |--------------------------------------------------------------------------
-            | 2. Création de l'employé
-            |--------------------------------------------------------------------------
-            */
 
             $employe = Employe::create([
                 'id_utilisateur' => $utilisateur->id_utilisateur,
@@ -136,76 +94,62 @@ class InvitationController extends Controller
                 'ville' => $validated['ville'] ?? null,
             ]);
 
-            /*
-            |--------------------------------------------------------------------------
-            | 3. Création de l'invitation
-            |--------------------------------------------------------------------------
-            */
-
             $invitation = Invitation::create([
                 'id_utilisateur' => $utilisateur->id_utilisateur,
-                'email' => $email,
-
-                /*
-                 * On ne stocke jamais le token brut.
-                 */
+                'email' => $utilisateur->email,
                 'token' => hash('sha256', $token),
-
-                /*
-                 * QR code valable 15 minutes (règle métier validée).
-                 */
-                'expires_at' => now()->addMinutes(15),
+                'expires_at' => now()->addHours(48),
             ]);
 
             return [
                 'utilisateur' => $utilisateur,
                 'employe' => $employe,
                 'invitation' => $invitation,
-                'token' => $token,
             ];
         });
 
-        /*
-        |--------------------------------------------------------------------------
-        | Génération du lien React
-        |--------------------------------------------------------------------------
-        */
+        $activationUrl = rtrim(
+            config('app.frontend_url', 'http://localhost:5173'),
+            '/'
+        ) . '/activation-compte?token=' . urlencode($token);
 
-        $frontendUrl = config(
-            'app.frontend_url',
-            'http://localhost:5173'
-        );
+        try {
+            Mail::to($resultat['utilisateur']->email)->send(
+                new InvitationEmploye(
+                    trim(
+                        $resultat['utilisateur']->prenom . ' ' .
+                        $resultat['utilisateur']->nom
+                    ),
+                    $activationUrl,
+                    $resultat['invitation']->expires_at->format('d/m/Y à H:i')
+                )
+            );
+        } catch (Throwable $e) {
+            report($e);
 
-        $activationUrl =
-            rtrim($frontendUrl, '/') .
-            '/activation-compte?token=' .
-            urlencode($resultat['token']);
+            return response()->json([
+                'message' => "L'employé a été créé, mais l'e-mail d'invitation n'a pas pu être envoyé. Réessaie avec l'action de renvoi d'invitation.",
+                'data' => [
+                    'id_utilisateur' => $resultat['utilisateur']->id_utilisateur,
+                    'id_employe' => $resultat['employe']->id_employe,
+                    'email' => $resultat['utilisateur']->email,
+                ],
+            ], 503);
+        }
 
         return response()->json([
-            'message' => 'Invitation créée avec succès.',
-
+            'message' => 'Employé créé. L’invitation a été envoyée par e-mail.',
             'data' => [
-                'id_utilisateur' =>
-                    $resultat['utilisateur']->id_utilisateur,
-
-                'id_employe' =>
-                    $resultat['employe']->id_employe,
-
-                'email' =>
-                    $resultat['utilisateur']->email,
-
-                'activation_url' =>
-                    $activationUrl,
-
-                'expires_at' =>
-                    $resultat['invitation']->expires_at,
+                'id_utilisateur' => $resultat['utilisateur']->id_utilisateur,
+                'id_employe' => $resultat['employe']->id_employe,
+                'email' => $resultat['utilisateur']->email,
+                'expires_at' => $resultat['invitation']->expires_at,
             ],
         ], 201);
     }
 
-
     /**
-     * Renvoyer une invitation à un employé dont le compte est inactif.
+     * Renvoyer une invitation à un employé existant.
      */
     public function renvoyer(Request $request, int $id): JsonResponse
     {
@@ -224,7 +168,7 @@ class InvitationController extends Controller
 
         $utilisateur = $employe->utilisateur;
 
-        if (strtolower($utilisateur->statut) === 'actif') {
+        if (strtolower((string) $utilisateur->statut) === 'actif') {
             return response()->json([
                 'message' => 'Ce compte est déjà activé.',
             ], 422);
@@ -232,250 +176,281 @@ class InvitationController extends Controller
 
         $token = Str::random(64);
 
-        $invitation = DB::transaction(function () use (
-            $utilisateur,
-            $token
-        ) {
-            // Invalider les anciennes invitations non utilisées.
-            Invitation::where(
-                'id_utilisateur',
-                $utilisateur->id_utilisateur
-            )
-                ->whereNull('used_at')
-                ->update(['used_at' => now()]);
+        $invitation = Invitation::create([
+            'id_utilisateur' => $utilisateur->id_utilisateur,
+            'email' => $utilisateur->email,
+            'token' => hash('sha256', $token),
+            'expires_at' => now()->addHours(48),
+        ]);
 
-            // Créer une nouvelle invitation valable 15 minutes.
-            return Invitation::create([
-                'id_utilisateur' => $utilisateur->id_utilisateur,
-                'email' => $utilisateur->email,
-                'token' => hash('sha256', $token),
-                'expires_at' => now()->addMinutes(15),
+        $activationUrl = rtrim(
+            config('app.frontend_url', 'http://localhost:5173'),
+            '/'
+        ) . '/activation-compte?token=' . urlencode($token);
+
+        try {
+            Mail::to($utilisateur->email)->send(
+                new InvitationEmploye(
+                    trim($utilisateur->prenom . ' ' . $utilisateur->nom),
+                    $activationUrl,
+                    $invitation->expires_at->format('d/m/Y à H:i')
+                )
+            );
+        } catch (Throwable $e) {
+            report($e);
+
+            // En cas d'échec, invalider uniquement la nouvelle invitation.
+            $invitation->used_at = now();
+            $invitation->save();
+
+            return response()->json([
+                'message' => "L'e-mail n'a pas pu être envoyé. Les anciennes invitations n'ont pas été invalidées. Réessaie.",
+            ], 503);
+        }
+
+        // L'e-mail a été envoyé : les anciennes invitations deviennent invalides.
+        Invitation::where('id_utilisateur', $utilisateur->id_utilisateur)
+            ->where('id', '!=', $invitation->getKey())
+            ->whereNull('used_at')
+            ->update([
+                'used_at' => now(),
             ]);
-        });
-
-        $frontendUrl = config(
-            'app.frontend_url',
-            'http://localhost:5173'
-        );
-
-        $activationUrl = rtrim($frontendUrl, '/')
-            . '/activation-compte?token='
-            . urlencode($token);
 
         return response()->json([
-            'message' => 'Nouvelle invitation générée avec succès.',
+            'message' => 'Une nouvelle invitation a été envoyée par e-mail.',
             'data' => [
-                'id_utilisateur' => $utilisateur->id_utilisateur,
                 'id_employe' => $employe->id_employe,
                 'email' => $utilisateur->email,
-                'activation_url' => $activationUrl,
                 'expires_at' => $invitation->expires_at,
             ],
         ]);
     }
 
     /**
-     * Vérifier une invitation.
+     * Message explicite selon la raison du refus du lien :
+     * - compte déjà actif  => l'invitation a réellement été utilisée ;
+     * - compte inactif     => le lien a été remplacé par un renvoi plus récent.
+     */
+    private function reponseInvitationUtilisee(Invitation $invitation): JsonResponse
+    {
+        $compteActif = strtolower((string) $invitation->utilisateur?->statut)
+            === 'actif';
+
+        return response()->json([
+            'message' => $compteActif
+                ? 'Cette invitation a déjà été utilisée. Le compte est actif : tu peux te connecter.'
+                : 'Ce lien n’est plus valide : une invitation plus récente a été envoyée. Ouvre le dernier e-mail d’invitation reçu.',
+        ], 410);
+    }
+
+    /**
+     * Vérifier un lien d'activation.
+     */
+    /**
+     * Vérifier un lien d'activation.
      */
     public function verify(string $token): JsonResponse
     {
         $invitation = Invitation::with([
             'utilisateur.employe',
-        ])
-            ->where(
-                'token',
-                hash('sha256', $token)
-            )
-            ->first();
+        ])->where(
+            'token',
+            hash('sha256', $token)
+        )->first();
 
         if (!$invitation) {
             return response()->json([
-                'message' => 'Invitation invalide.'
+                'message' => 'Lien d’invitation invalide.',
             ], 404);
         }
 
-        if ($invitation->used_at !== null) {
-            return response()->json([
-                'message' => 'Cette invitation a déjà été utilisée.'
-            ], 410);
+        if ($invitation->used_at) {
+            return $this->reponseInvitationUtilisee($invitation);
         }
 
         if ($invitation->expires_at->isPast()) {
             return response()->json([
-                'message' => 'Cette invitation a expiré. Veuillez demander un nouveau QR code au RH.'
+                'message' => 'Cette invitation a expiré. Demande un nouveau lien.',
             ], 410);
         }
 
         $utilisateur = $invitation->utilisateur;
-        $employe = $utilisateur->employe;
+        $employe = $utilisateur?->employe;
 
-        /*
-        |--------------------------------------------------------------------
-        | Informations de pré-remplissage + champs manquants
-        |--------------------------------------------------------------------
-        | L'employé complète uniquement ce qui manque. Le rôle, le service,
-        | le poste et le matricule sont réservés au RH et ne sont pas
-        | renvoyés pour modification.
-        */
+        if (!$utilisateur) {
+            return response()->json([
+                'message' => 'Le compte associé à cette invitation est introuvable.',
+            ], 404);
+        }
 
-        $champsManquants = array_values(array_filter([
-            !$utilisateur->email_personnel ? 'email_personnel' : null,
-            !$utilisateur->telephone ? 'telephone' : null,
-            !$employe?->date_naissance ? 'date_naissance' : null,
-            !$employe?->adresse ? 'adresse' : null,
-            !$employe?->ville ? 'ville' : null,
-        ]));
+        if (strtolower((string) $utilisateur->statut) === 'actif') {
+            return response()->json([
+                'message' => 'Ce compte est déjà activé.',
+            ], 410);
+        }
+
+        $champsManquants = [];
+
+        if (empty($utilisateur->email_personnel)) {
+            $champsManquants[] = 'email_personnel';
+        }
+
+        if (empty($utilisateur->telephone)) {
+            $champsManquants[] = 'telephone';
+        }
+
+        if ($employe && empty($employe->date_naissance)) {
+            $champsManquants[] = 'date_naissance';
+        }
+
+        if ($employe && empty($employe->adresse)) {
+            $champsManquants[] = 'adresse';
+        }
+
+        if ($employe && empty($employe->ville)) {
+            $champsManquants[] = 'ville';
+        }
 
         return response()->json([
             'message' => 'Invitation valide.',
-
             'data' => [
-                'email' => $invitation->email,
+                'email' => $utilisateur->email,
                 'nom' => $utilisateur->nom,
                 'prenom' => $utilisateur->prenom,
                 'expires_at' => $invitation->expires_at,
-
-                /* Champs déjà renseignés (lecture seule) */
                 'telephone' => $utilisateur->telephone,
-
-                /* Pré-remplissage des infos personnelles */
-                'email_personnel' =>
-                    $utilisateur->email_personnel,
-                'date_naissance' =>
-                    $employe?->date_naissance,
+                'email_personnel' => $utilisateur->email_personnel,
+                'date_naissance' => $employe?->date_naissance,
                 'adresse' => $employe?->adresse,
                 'ville' => $employe?->ville,
-
                 'champs_manquants' => $champsManquants,
             ],
         ]);
     }
 
+    /**
+     * Contrôle l'état du jeton avant la validation du formulaire,
+     * afin que les erreurs de jeton (invalide, expiré, déjà utilisé)
+     * priment sur les erreurs de champs (ex. e-mail personnel déjà pris).
+     */
+    private function controleTokenAvantValidation(?string $token): ?JsonResponse
+    {
+        if ($token === null || $token === '') {
+            return null;
+        }
+
+        $invitation = Invitation::where(
+            'token',
+            hash('sha256', $token)
+        )->first();
+
+        if (!$invitation) {
+            return response()->json([
+                'message' => 'Lien d’invitation invalide.',
+            ], 404);
+        }
+
+        if ($invitation->used_at) {
+            return $this->reponseInvitationUtilisee($invitation);
+        }
+
+        if ($invitation->expires_at->isPast()) {
+            return response()->json([
+                'message' => 'Cette invitation a expiré. Demande un nouveau lien.',
+            ], 410);
+        }
+
+        return null;
+    }
+
 
     /**
-     * Activer le compte.
-     *
-     * L'employé renseigne son e-mail personnel, son téléphone et les
-     * informations personnelles manquantes, puis choisit son mot de passe.
-     * Son rôle, service, poste et matricule ne peuvent pas être modifiés
-     * ici (réservés au RH).
+     * Activer le compte de l'employé.
      */
     public function activate(Request $request): JsonResponse
     {
+        $refus = $this->controleTokenAvantValidation(
+            trim((string) $request->input('token', ''))
+        );
+
+        if ($refus) {
+            return $refus;
+        }
+
+
         $validated = $request->validate([
             'token' => ['required', 'string'],
-
-            'password' => [
-                'required',
-                'string',
-                'min:8',
-                'confirmed',
-            ],
-
-            /* Identifiant de connexion inchangé : email pro. */
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
             'email_personnel' => [
                 'required',
                 'email',
                 'max:150',
                 'unique:utilisateurs,email_personnel',
             ],
-
-            'telephone' => [
-                'nullable',
-                'string',
-                'max:30',
-            ],
-
+            'telephone' => ['nullable', 'string', 'max:30'],
             'date_naissance' => ['nullable', 'date'],
-
-            'adresse' => [
-                'nullable',
-                'string',
-                'max:255',
-            ],
-
-            'ville' => [
-                'nullable',
-                'string',
-                'max:100',
-            ],
+            'adresse' => ['nullable', 'string', 'max:255'],
+            'ville' => ['nullable', 'string', 'max:100'],
         ]);
 
-        /*
-        |--------------------------------------------------------------------
-        | Activation transactionnelle et verrouillée
-        |--------------------------------------------------------------------
-        | lockForUpdate empêche deux soumissions concurrentes d'activer
-        | le même compte (double utilisation du QR code).
-        */
+        $validated['email_personnel'] = strtolower(
+            trim($validated['email_personnel'])
+        );
 
         return DB::transaction(function () use ($validated) {
-            $invitation = Invitation::with('utilisateur')
-                ->where(
-                    'token',
-                    hash('sha256', $validated['token'])
-                )
+            $invitation = Invitation::with('utilisateur.employe')
+                ->where('token', hash('sha256', $validated['token']))
                 ->lockForUpdate()
                 ->first();
 
             if (!$invitation) {
                 return response()->json([
-                    'message' => 'Invitation invalide.'
+                    'message' => 'Lien d’invitation invalide.',
                 ], 404);
             }
 
-            if ($invitation->used_at !== null) {
-                return response()->json([
-                    'message' => 'Cette invitation a déjà été utilisée.'
-                ], 410);
+            if ($invitation->used_at) {
+                return $this->reponseInvitationUtilisee($invitation);
             }
 
             if ($invitation->expires_at->isPast()) {
                 return response()->json([
-                    'message' => 'Cette invitation a expiré. Veuillez demander un nouveau QR code au RH.'
+                    'message' => 'Cette invitation a expiré. Demande un nouveau lien.',
                 ], 410);
             }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Activation du compte
-        |--------------------------------------------------------------------------
-        */
-
             $utilisateur = $invitation->utilisateur;
-            $employe = $utilisateur->employe;
 
-            $utilisateur->mot_de_passe =
-                Hash::make($validated['password']);
+            if (!$utilisateur) {
+                return response()->json([
+                    'message' => 'Compte utilisateur introuvable.',
+                ], 404);
+            }
 
-            $utilisateur->email_personnel =
-                strtolower(trim($validated['email_personnel']));
+            if (strtolower((string) $utilisateur->statut) === 'actif') {
+                return response()->json([
+                    'message' => 'Ce compte est déjà activé.',
+                ], 410);
+            }
 
-            $utilisateur->telephone =
-                $validated['telephone']
-                    ?? $utilisateur->telephone;
-
+            $utilisateur->mot_de_passe = Hash::make($validated['password']);
+            $utilisateur->email_personnel = $validated['email_personnel'];
+            $utilisateur->telephone = $validated['telephone']
+                ?? $utilisateur->telephone;
             $utilisateur->statut = 'actif';
-
             $utilisateur->save();
 
-            /*
-             * Informations personnelles de l'employé.
-             * Seuls les champs personnels sont complétés.
-             * Rôle, service, poste et matricule inchangés.
-             */
+            $employe = $utilisateur->employe;
+
             if ($employe) {
-                $employe->date_naissance =
-                    $validated['date_naissance']
-                        ?? $employe->date_naissance;
+                $employe->date_naissance = $validated['date_naissance']
+                    ?? $employe->date_naissance;
 
-                $employe->adresse =
-                    $validated['adresse']
-                        ?? $employe->adresse;
+                $employe->adresse = $validated['adresse']
+                    ?? $employe->adresse;
 
-                $employe->ville =
-                    $validated['ville']
-                        ?? $employe->ville;
+                $employe->ville = $validated['ville']
+                    ?? $employe->ville;
 
                 $employe->save();
             }
@@ -483,11 +458,20 @@ class InvitationController extends Controller
             $invitation->used_at = now();
             $invitation->save();
 
+            // Invalider également les autres invitations non utilisées.
+            Invitation::where('id_utilisateur', $utilisateur->id_utilisateur)
+                ->whereNull('used_at')
+                ->where('id', '!=', $invitation->getKey())
+                ->update([
+                    'used_at' => now(),
+                ]);
+
             return response()->json([
-                'message' =>
-                    'Compte activé avec succès. Vous pouvez maintenant vous connecter.',
+                'message' => 'Compte activé avec succès. Tu peux maintenant te connecter.',
                 'data' => [
+                    'id_utilisateur' => $utilisateur->id_utilisateur,
                     'email' => $utilisateur->email,
+                    'statut' => $utilisateur->statut,
                 ],
             ]);
         });

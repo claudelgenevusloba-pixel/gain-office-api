@@ -18,7 +18,6 @@ return new class extends Migration
 
             $table->text('description')->nullable();
 
-
             $table->enum('statut', [
                 'actif',
                 'inactif'

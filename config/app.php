@@ -65,7 +65,7 @@ return [
     |
     */
 
-    'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
+    'frontend_url' => env('FRONTEND_URL', env('APP_ENV') === 'production' ? 'https://superlative-centaur-0b2e53.netlify.app' : 'http://localhost:5173'),
 
     /*
     |--------------------------------------------------------------------------
