@@ -28,6 +28,22 @@ Route::post(
     [AuthController::class, 'login']
 );
 
+/*
+|--------------------------------------------------------------------------
+| Récupération de mot de passe (public, avec limitation de débit)
+|--------------------------------------------------------------------------
+*/
+
+Route::post(
+    '/mot-de-passe-oublie',
+    [AuthController::class, 'motDePasseOublie']
+);
+
+Route::post(
+    '/mot-de-passe-reinitialise',
+    [AuthController::class, 'reinitialiserMotDePasse']
+);
+
 
 /*
 |--------------------------------------------------------------------------
@@ -71,6 +87,11 @@ Route::post(
     Route::put(
         '/auth/password',
         [AuthController::class, 'changerMotDePasse']
+    );
+
+    Route::put(
+        '/auth/profil',
+        [AuthController::class, 'mettreAJourProfil']
     );
 
 

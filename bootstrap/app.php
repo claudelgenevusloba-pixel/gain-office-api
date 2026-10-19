@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\ForceUtf8;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -20,6 +21,10 @@ return Application::configure(basePath: dirname(__DIR__))
 
             return '/login';
         });
+
+        // Forcer l'encodage UTF-8 dans toutes les réponses
+        $middleware->web(ForceUtf8::class);
+        $middleware->api(ForceUtf8::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(function (Request $request) {
