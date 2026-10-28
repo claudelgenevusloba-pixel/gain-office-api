@@ -18,13 +18,18 @@ class EmployeController extends Controller
     /**
      * Liste de tous les employés.
      */
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
+        RolePermissions::exiger($request->user(), 'voir_employes');
+
         $employes = Employe::with([
             'utilisateur.role',
             'utilisateur.superieur:id_utilisateur,nom,prenom',
             'poste.service',
         ])
+        ->whereHas('utilisateur.role', function ($query) {
+            $query->whereNotIn('nom', ['Directeur', 'Sous-directeur']);
+        })
         ->orderByDesc('id_employe')
         ->get();
 
@@ -39,12 +44,18 @@ class EmployeController extends Controller
     /**
      * Afficher un employé.
      */
-    public function show(int $id): JsonResponse
+    public function show(Request $request, int $id): JsonResponse
     {
+        RolePermissions::exiger($request->user(), 'voir_employes');
+
         $employe = Employe::with([
             'utilisateur.role',
             'poste.service',
-        ])->find($id);
+        ])
+        ->whereHas('utilisateur.role', function ($query) {
+            $query->whereNotIn('nom', ['Directeur', 'Sous-directeur']);
+        })
+        ->find($id);
 
         if (!$employe) {
             return response()->json([

@@ -30,11 +30,12 @@ class RolePermissions
         return match ($role) {
 
             'Directeur' => array_merge($voirDashboard, [
+                'voir_historique',
                 'voir_employes',
                 'voir_taches', 'creer_tache', 'modifier_tache',
                 'supprimer_tache', 'assigner_tache', 'suivre_tache',
                 'terminer_tache', 'valider_tache',
-                'voir_demandes', 'creer_demande', 'modifier_demande',
+                'voir_demandes', 'modifier_demande',
                 'traiter_demande', 'accepter_demande', 'refuser_demande',
                 'voir_rapports', 'valider_rapport', 'controler_rapport',
                 'voir_parametres',
@@ -51,6 +52,16 @@ class RolePermissions
             ], $notifications),
 
             'Responsable' => array_merge($voirDashboard, [
+                'voir_taches', 'creer_tache', 'modifier_tache',
+                'assigner_tache', 'suivre_tache', 'terminer_tache',
+                'voir_demandes', 'creer_demande', 'modifier_demande',
+                'traiter_demande', 'accepter_demande', 'refuser_demande',
+                'voir_rapports', 'creer_rapport', 'modifier_rapport',
+                'valider_rapport',
+                'voir_parametres',
+            ], $notifications),
+
+            'Sous-directeur' => array_merge($voirDashboard, [
                 'voir_employes',
                 'voir_taches', 'creer_tache', 'modifier_tache',
                 'assigner_tache', 'suivre_tache', 'terminer_tache',
@@ -71,6 +82,7 @@ class RolePermissions
             /* L'administrateur dispose de toutes les permissions */
             'Administrateur' => [
                 'voir_dashboard',
+                'voir_historique',
                 'voir_employes', 'creer_employe', 'modifier_employe',
                 'supprimer_employe',
                 'voir_taches', 'creer_tache', 'modifier_tache',

@@ -175,6 +175,16 @@ class TacheController extends Controller
             ],
         ]);
 
+        $assigne = Utilisateur::with('role')->findOrFail(
+            (int) $validated['id_assigne']
+        );
+        if ($this->normaliserRole($this->role($assigne)) === 'directeur') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Une tâche ne peut pas être attribuée au Directeur.',
+            ], 422);
+        }
+
         /*
         |--------------------------------------------------------------------------
         | Vérification de l'assignation
@@ -359,6 +369,24 @@ class TacheController extends Controller
                 'string',
             ],
         ]);
+
+        if (
+            array_key_exists('id_assigne', $validated) &&
+            $validated['id_assigne'] !== null
+        ) {
+            $nouvelAssigne = Utilisateur::with('role')->findOrFail(
+                (int) $validated['id_assigne']
+            );
+            if (
+                $this->normaliserRole($this->role($nouvelAssigne)) ===
+                'directeur'
+            ) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Une tâche ne peut pas être attribuée au Directeur.',
+                ], 422);
+            }
+        }
 
         /*
         |--------------------------------------------------------------------------
@@ -730,6 +758,7 @@ private function verifierAccesTache(
 
     $rolesGlobaux = [
         'directeur',
+        'sous-directeur',
         'rh',
         'responsable',
         'administrateur',
@@ -814,6 +843,15 @@ private function permission(
         ],
 
         'responsable' => [
+            'voir_taches',
+            'creer_tache',
+            'modifier_tache',
+            'assigner_tache',
+            'suivre_tache',
+            'terminer_tache',
+        ],
+
+        'sous-directeur' => [
             'voir_taches',
             'creer_tache',
             'modifier_tache',

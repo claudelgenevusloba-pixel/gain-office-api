@@ -120,7 +120,6 @@ class DemandeController extends Controller
 
             'Directeur' => [
                 'voir_demandes',
-                'creer_demande',
                 'modifier_demande',
                 'supprimer_demande',
                 'traiter_demande',
@@ -147,6 +146,15 @@ class DemandeController extends Controller
             ],
 
             'Responsable' => [
+                'voir_demandes',
+                'creer_demande',
+                'modifier_demande',
+                'traiter_demande',
+                'accepter_demande',
+                'refuser_demande',
+            ],
+
+            'Sous-directeur' => [
                 'voir_demandes',
                 'creer_demande',
                 'modifier_demande',
@@ -260,6 +268,13 @@ class DemandeController extends Controller
             return true;
         }
 
+        if (
+            $roleUtilisateur === 'Sous-directeur' &&
+            $roleWorkflow === 'Responsable'
+        ) {
+            return true;
+        }
+
         return $roleUtilisateur === $roleWorkflow;
     }
 
@@ -349,6 +364,14 @@ class DemandeController extends Controller
                     return;
                 }
 
+                if ($role === 'Responsable') {
+                    $query->whereIn('nom', [
+                        'Responsable',
+                        'Sous-directeur',
+                    ]);
+                    return;
+                }
+
                 $query->where('nom', $role);
             })
             ->where('statut', 'actif')
@@ -400,15 +423,22 @@ class DemandeController extends Controller
             ->map(function ($demande) use ($utilisateur) {
 
                 $etape = $this->etapeActuelle($demande);
+                $estAdministrateur =
+                    $this->role($utilisateur) === 'Administrateur';
 
                 $peutTraiter = false;
 
                 if (
                     $demande->statut === 'en_attente' &&
-                    !$etape['terminee'] &&
-                    $this->memeRole(
-                        $this->role($utilisateur),
-                        $etape['role']
+                    (
+                        $estAdministrateur ||
+                        (
+                            !$etape['terminee'] &&
+                            $this->memeRole(
+                                $this->role($utilisateur),
+                                $etape['role']
+                            )
+                        )
                     )
                 ) {
                     $peutTraiter =
@@ -452,7 +482,8 @@ class DemandeController extends Controller
 
         if (
             $role !== 'Employe' &&
-            $role !== 'Employé'
+            $role !== 'Employé' &&
+            $role !== 'Administrateur'
         ) {
             $demandes = $demandes
                 ->filter(function ($demande) use ($utilisateur) {
@@ -532,8 +563,13 @@ class DemandeController extends Controller
 
         if (
             $demande->statut === 'en_attente' &&
-            !$etape['terminee'] &&
-            $this->memeRole($role, $etape['role'])
+            (
+                $role === 'Administrateur' ||
+                (
+                    !$etape['terminee'] &&
+                    $this->memeRole($role, $etape['role'])
+                )
+            )
         ) {
             $peutTraiter =
                 in_array(
@@ -894,6 +930,17 @@ class DemandeController extends Controller
             'traiter_demande'
         );
 
+        if (
+            (int) $demande->id_demandeur ===
+                (int) $utilisateur->id_utilisateur &&
+            $role !== 'Administrateur'
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Vous ne pouvez pas traiter votre propre demande.',
+            ], 403);
+        }
+
         /*
         |--------------------------------------------------------------------------
         | VÉRIFICATION DU WORKFLOW
@@ -904,10 +951,15 @@ class DemandeController extends Controller
 
         if (
             $demande->statut !== 'en_attente' ||
-            $etape['terminee'] ||
-            !$this->memeRole(
-                $role,
-                $etape['role']
+            (
+                $role !== 'Administrateur' &&
+                (
+                    $etape['terminee'] ||
+                    !$this->memeRole(
+                        $role,
+                        $etape['role']
+                    )
+                )
             )
         ) {
 

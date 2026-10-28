@@ -50,7 +50,8 @@ return [
     |
     */
 
-    'expiration' => null,
+    // Les tokens Bearer sont valides pendant 8 heures après leur création.
+    'expiration' => 480,
 
     /*
     |--------------------------------------------------------------------------

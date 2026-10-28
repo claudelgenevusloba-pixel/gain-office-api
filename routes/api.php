@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 // Contrôleurs API
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\HistoriqueController;
 use App\Http\Controllers\Api\DemandeController;
 use App\Http\Controllers\Api\EmployeController;
 use App\Http\Controllers\Api\NotificationController;
@@ -104,6 +105,11 @@ Route::post(
     Route::get(
         '/dashboard',
         [DashboardController::class, 'index']
+    );
+
+    Route::get(
+        '/historique-actions',
+        [HistoriqueController::class, 'index']
     );
 
 

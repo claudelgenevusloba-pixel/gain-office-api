@@ -53,9 +53,6 @@ class AuthController extends Controller
             ], 403);
         }
 
-        // Supprime les anciens tokens avant d'en créer un nouveau.
-        $utilisateur->tokens()->delete();
-
         $token = $utilisateur->createToken(
             'gain-office-token'
         )->plainTextToken;
