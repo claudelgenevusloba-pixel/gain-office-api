@@ -7,6 +7,7 @@ use App\Models\Demande;
 use App\Models\Historique;
 use App\Models\Notification;
 use App\Models\Utilisateur;
+use App\Support\RolePermissions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -106,85 +107,14 @@ class DemandeController extends Controller
     | PERMISSIONS
     |--------------------------------------------------------------------------
     |
-    | Les permissions correspondent exactement aux permissions définies
-    | dans le frontend React.
-    |
-    | Il n'existe pas de table permissions dans la base actuelle.
-    | On applique donc ici les mêmes droits que roles.js.
+    | Les pages React et l'API partagent une seule matrice de permissions.
+    | Le périmètre des demandes est ensuite filtré selon le rôle et le circuit.
     |
     */
 
-    private function permissionsParRole(): array
+    private function permissionsParRole(string $role): array
     {
-        return [
-
-            'Directeur' => [
-                'voir_demandes',
-                'modifier_demande',
-                'supprimer_demande',
-                'traiter_demande',
-                'accepter_demande',
-                'refuser_demande',
-            ],
-
-            'Ressources humaines' => [
-                'voir_demandes',
-                'creer_demande',
-                'modifier_demande',
-                'traiter_demande',
-                'accepter_demande',
-                'refuser_demande',
-            ],
-
-            'RH' => [
-                'voir_demandes',
-                'creer_demande',
-                'modifier_demande',
-                'traiter_demande',
-                'accepter_demande',
-                'refuser_demande',
-            ],
-
-            'Responsable' => [
-                'voir_demandes',
-                'creer_demande',
-                'modifier_demande',
-                'traiter_demande',
-                'accepter_demande',
-                'refuser_demande',
-            ],
-
-            'Sous-directeur' => [
-                'voir_demandes',
-                'creer_demande',
-                'modifier_demande',
-                'traiter_demande',
-                'accepter_demande',
-                'refuser_demande',
-            ],
-
-            'Employé' => [
-                'voir_demandes',
-                'creer_demande',
-                'modifier_demande',
-            ],
-
-            'Employe' => [
-                'voir_demandes',
-                'creer_demande',
-                'modifier_demande',
-            ],
-
-            'Administrateur' => [
-                'voir_demandes',
-                'creer_demande',
-                'modifier_demande',
-                'supprimer_demande',
-                'traiter_demande',
-                'accepter_demande',
-                'refuser_demande',
-            ],
-        ];
+        return RolePermissions::parRole($role);
     }
 
     /*
@@ -208,19 +138,7 @@ class DemandeController extends Controller
         Utilisateur $utilisateur,
         string $permission
     ): void {
-        $role = $this->role($utilisateur);
-
-        $permissions = $this->permissionsParRole();
-
-        if (
-            !isset($permissions[$role]) ||
-            !in_array($permission, $permissions[$role], true)
-        ) {
-            abort(
-                403,
-                "Vous n’avez pas la permission : {$permission}."
-            );
-        }
+        RolePermissions::exiger($utilisateur, $permission);
     }
 
     /*
@@ -387,13 +305,15 @@ class DemandeController extends Controller
     public function index(Request $request): JsonResponse
     {
         $utilisateur = $request->user();
+        $role = $this->role($utilisateur);
+        $permissionLecture = in_array($role, ['Employe', 'Employé'], true)
+            ? 'voir_demandes'
+            : 'voir_suivi_demandes';
 
         $this->verifierPermission(
             $utilisateur,
-            'voir_demandes'
+            $permissionLecture
         );
-
-        $role = $this->role($utilisateur);
 
         $query = Demande::with([
             'demandeur.role',
@@ -434,6 +354,7 @@ class DemandeController extends Controller
                         $estAdministrateur ||
                         (
                             !$etape['terminee'] &&
+                            (int) $demande->id_demandeur !== (int) $utilisateur->id_utilisateur &&
                             $this->memeRole(
                                 $this->role($utilisateur),
                                 $etape['role']
@@ -444,9 +365,7 @@ class DemandeController extends Controller
                     $peutTraiter =
                         in_array(
                             'traiter_demande',
-                            $this->permissionsParRole()[
-                                $this->role($utilisateur)
-                            ] ?? [],
+                            $this->permissionsParRole($this->role($utilisateur)),
                             true
                         );
                 }
@@ -520,10 +439,14 @@ class DemandeController extends Controller
     ): JsonResponse {
 
         $utilisateur = $request->user();
+        $role = $this->role($utilisateur);
+        $permissionLecture = in_array($role, ['Employe', 'Employé'], true)
+            ? 'voir_demandes'
+            : 'voir_suivi_demandes';
 
         $this->verifierPermission(
             $utilisateur,
-            'voir_demandes'
+            $permissionLecture
         );
 
         $demande = Demande::with([
@@ -539,44 +462,37 @@ class DemandeController extends Controller
         }
 
         $role = $this->role($utilisateur);
-
-        /*
-        |--------------------------------------------------------------------------
-        | EMPLOYÉ : UNIQUEMENT SES DEMANDES
-        |--------------------------------------------------------------------------
-        */
-
-        if (
-            ($role === 'Employe' || $role === 'Employé') &&
-            $demande->id_demandeur !==
-                $utilisateur->id_utilisateur
-        ) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Accès interdit à cette demande.',
-            ], 403);
-        }
-
         $etape = $this->etapeActuelle($demande);
-
-        $peutTraiter = false;
-
-        if (
+        $permissionsRole = $this->permissionsParRole($role);
+        $estAdministrateur = $role === 'Administrateur';
+        $estDemandeur = (int) $demande->id_demandeur === (int) $utilisateur->id_utilisateur;
+        $estTraiteur = (int) $demande->id_traiteur === (int) $utilisateur->id_utilisateur;
+        $peutTraiter =
             $demande->statut === 'en_attente' &&
+            (!$estDemandeur || $estAdministrateur) &&
             (
-                $role === 'Administrateur' ||
+                $estAdministrateur ||
                 (
                     !$etape['terminee'] &&
                     $this->memeRole($role, $etape['role'])
                 )
-            )
-        ) {
-            $peutTraiter =
-                in_array(
-                    'traiter_demande',
-                    $this->permissionsParRole()[$role] ?? [],
-                    true
-                );
+            ) &&
+            in_array('traiter_demande', $permissionsRole, true);
+
+        /*
+        |--------------------------------------------------------------------------
+        | PÉRIMÈTRE DE CONSULTATION
+        |--------------------------------------------------------------------------
+        | Un employé ouvre ses demandes. Un valideur ouvre seulement une demande
+        | qu'il doit traiter, qu'il a déjà traitée ou qu'il a lui-même créée.
+        | L'administrateur conserve l'accès complet pour l'administration et les tests.
+        */
+
+        if (!$estAdministrateur && !$estDemandeur && !$estTraiteur && !$peutTraiter) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Accès interdit à cette demande.',
+            ], 403);
         }
 
         $demande->setAttribute(

@@ -4,10 +4,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Utilisateur;
+use App\Services\PhotoProfilService;
+use App\Services\EmailDeliveryService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Auth\Events\PasswordReset;
@@ -71,6 +72,7 @@ class AuthController extends Controller
                 'prenom' => $utilisateur->prenom,
                 'email' => $utilisateur->email,
                 'telephone' => $utilisateur->telephone,
+                'photo' => $utilisateur->photo,
                 'statut' => $utilisateur->statut,
                 'role' => $utilisateur->role ? [
                     'id_role' => $utilisateur->role->id_role,
@@ -143,7 +145,7 @@ class AuthController extends Controller
     /**
      * Mettre à jour le profil de l'utilisateur connecté (nom, prénom, email, téléphone).
      */
-    public function mettreAJourProfil(Request $request): JsonResponse
+    public function mettreAJourProfil(Request $request, PhotoProfilService $photos): JsonResponse
     {
         $utilisateur = $request->user();
 
@@ -157,9 +159,27 @@ class AuthController extends Controller
                 Rule::unique('utilisateurs', 'email')->ignore($utilisateur->id_utilisateur, 'id_utilisateur'),
             ],
             'telephone' => ['nullable', 'string', 'max:30'],
+            'photo' => ['sometimes', 'nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
         ]);
 
-        $utilisateur->update($validated);
+        $anciennePhoto = $utilisateur->photo;
+        $photoPath = $photos->enregistrer($request->file('photo'));
+        $donneesProfil = collect($validated)->except('photo')->all();
+
+        if ($photoPath) {
+            $donneesProfil['photo'] = $photoPath;
+        }
+
+        try {
+            $utilisateur->update($donneesProfil);
+        } catch (\Throwable $e) {
+            $photos->supprimer($photoPath);
+            throw $e;
+        }
+
+        if ($photoPath) {
+            $photos->supprimer($anciennePhoto);
+        }
 
         $utilisateur->load('role');
 
@@ -172,6 +192,7 @@ class AuthController extends Controller
                 'prenom' => $utilisateur->prenom,
                 'email' => $utilisateur->email,
                 'telephone' => $utilisateur->telephone,
+                'photo' => $utilisateur->photo,
                 'statut' => $utilisateur->statut,
                 'role' => $utilisateur->role ? [
                     'id_role' => $utilisateur->role->id_role,
@@ -203,7 +224,7 @@ class AuthController extends Controller
      * - Envoi réel d'un e-mail uniquement pour un compte admissible et actif.
      * - Si l'envoi échoue, une erreur explicite est retournée (aucun faux succès).
      */
-    public function motDePasseOublie(Request $request): JsonResponse
+    public function motDePasseOublie(Request $request, EmailDeliveryService $emailDelivery): JsonResponse
     {
         $validated = $request->validate([
             'email' => ['required', 'email'],
@@ -235,7 +256,7 @@ class AuthController extends Controller
                 . '&email=' . urlencode($utilisateur->email);
 
             try {
-                Mail::to($utilisateur->email)->send(
+                $emailDelivery->envoyer($utilisateur->email,
                     new ReinitialisationMotDePasse(
                         trim($utilisateur->prenom . ' ' . $utilisateur->nom),
                         $lienReset

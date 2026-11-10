@@ -1,6 +1,6 @@
 # Tests API — GAIN OFFICE
 
-les tests réalisés avec Postman sur l'API Laravel de GAIN OFFICE.
+les tests réalisés avec Postman sur l'API Laravel de GAIN OFFICE
 
 ## Authentification
 

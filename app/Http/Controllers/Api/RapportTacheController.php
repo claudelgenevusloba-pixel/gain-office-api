@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Historique;
 use App\Models\Notification;
+use App\Models\PieceJointe;
 use App\Models\ParametreEntreprise;
 use App\Models\RapportTache;
 use App\Models\RapportValidation;
@@ -13,6 +14,10 @@ use App\Models\Utilisateur;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use App\Support\RolePermissions;
+use RuntimeException;
+use Throwable;
 use Illuminate\Validation\Rule;
 
 class RapportTacheController extends Controller
@@ -30,6 +35,7 @@ class RapportTacheController extends Controller
     public function index(Request $request): JsonResponse
     {
         $utilisateur = $request->user();
+        RolePermissions::exiger($utilisateur, 'voir_rapports');
 
         $query = RapportTache::query()
             ->with([
@@ -37,6 +43,7 @@ class RapportTacheController extends Controller
                 'auteur:id_utilisateur,nom,prenom,email',
                 'destinataire:id_utilisateur,nom,prenom',
                 'decideur:id_utilisateur,nom,prenom',
+                'piecesJointes',
             ])
             ->orderByDesc('created_at');
 
@@ -62,6 +69,7 @@ class RapportTacheController extends Controller
     public function show(Request $request, int $id): JsonResponse
     {
         $utilisateur = $request->user();
+        RolePermissions::exiger($utilisateur, 'voir_rapports');
 
         $rapport = RapportTache::with([
             'tache',
@@ -82,6 +90,34 @@ class RapportTacheController extends Controller
     }
 
     /**
+     * Télécharger une pièce jointe après vérification du périmètre du rapport.
+     */
+    public function telechargerPieceJointe(
+        Request $request,
+        int $id,
+        int $idPiece
+    ) {
+        $utilisateur = $request->user();
+        RolePermissions::exiger($utilisateur, 'voir_rapports');
+
+        $rapport = RapportTache::findOrFail($id);
+        $this->verifierAccesRapport($utilisateur, $rapport);
+
+        $piece = PieceJointe::query()
+            ->where('id_rapport', $rapport->id_rapport)
+            ->where('id_piece', $idPiece)
+            ->firstOrFail();
+
+        abort_unless(Storage::disk('local')->exists($piece->chemin), 404);
+
+        return Storage::disk('local')->download(
+            $piece->chemin,
+            $piece->nom_original,
+            ['X-Content-Type-Options' => 'nosniff']
+        );
+    }
+
+    /**
      * Soumettre un rapport.
      *
      * - Rapport autonome (période + contenu) ou lié à une tâche assignée.
@@ -93,6 +129,7 @@ class RapportTacheController extends Controller
     public function store(Request $request): JsonResponse
     {
         $utilisateur = $request->user();
+        RolePermissions::exiger($utilisateur, 'creer_rapport');
 
         $validated = $request->validate([
             'id_tache' => [
@@ -112,6 +149,8 @@ class RapportTacheController extends Controller
                 'date',
                 'after_or_equal:date_debut_periode',
             ],
+            'pieces_jointes' => ['sometimes', 'array', 'max:3'],
+            'pieces_jointes.*' => ['file', 'mimes:jpg,jpeg,png,webp,pdf,doc,docx', 'max:2048'],
         ]);
 
         $tache = null;
@@ -158,13 +197,18 @@ class RapportTacheController extends Controller
         /* Échéance : périodicité configurée dans les paramètres */
         $dateLimite = $this->calculerDateLimite($validated);
 
-        $rapport = DB::transaction(function () use (
-            $validated,
-            $utilisateur,
-            $destinataire,
-            $tache,
-            $dateLimite
-        ) {
+        $fichiersStockes = [];
+
+        try {
+            $rapport = DB::transaction(function () use (
+                $validated,
+                $utilisateur,
+                $destinataire,
+                $tache,
+                $dateLimite,
+                $request,
+                &$fichiersStockes
+            ) {
             $rapport = RapportTache::create([
                 'id_tache' => $tache?->id_tache,
                 'id_auteur' => $utilisateur->id_utilisateur,
@@ -187,6 +231,25 @@ class RapportTacheController extends Controller
                 'niveau_validation' => 1,
                 'date_soumission' => now(),
             ]);
+
+            foreach ($request->file('pieces_jointes', []) as $fichier) {
+                $chemin = $fichier->store('pieces-jointes/rapports', 'local');
+
+                if (!$chemin) {
+                    throw new RuntimeException('Une pièce jointe n’a pas pu être stockée.');
+                }
+
+                $fichiersStockes[] = $chemin;
+                $rapport->piecesJointes()->create([
+                    'id_uploader' => $utilisateur->id_utilisateur,
+                    'nom_original' => mb_substr(basename(str_replace('\\', '/', $fichier->getClientOriginalName())), 0, 255),
+                    'nom_stockage' => basename($chemin),
+                    'chemin' => $chemin,
+                    'extension' => strtolower($fichier->getClientOriginalExtension()),
+                    'mime_type' => $fichier->getMimeType(),
+                    'taille' => $fichier->getSize(),
+                ]);
+            }
 
             if ($tache) {
                 $tache->update([
@@ -226,7 +289,11 @@ class RapportTacheController extends Controller
             );
 
             return $rapport;
-        });
+            });
+        } catch (Throwable $e) {
+            Storage::disk('local')->delete($fichiersStockes);
+            throw $e;
+        }
 
         return response()->json([
             'success' => true,
@@ -236,6 +303,7 @@ class RapportTacheController extends Controller
                     'tache',
                     'auteur:id_utilisateur,nom,prenom,email',
                     'destinataire:id_utilisateur,nom,prenom',
+                    'piecesJointes',
                 ])
             ),
         ], 201);
@@ -498,7 +566,7 @@ class RapportTacheController extends Controller
     {
         $utilisateur = $request->user();
 
-        $rapport = RapportTache::with('tache')->findOrFail($id);
+        $rapport = RapportTache::with(['tache', 'piecesJointes'])->findOrFail($id);
 
         $role = $this->role($utilisateur);
 
@@ -510,6 +578,8 @@ class RapportTacheController extends Controller
             abort(403, 'Vous ne pouvez pas supprimer ce rapport.');
         }
 
+        $cheminsPieces = $rapport->piecesJointes->pluck('chemin')->all();
+
         DB::transaction(function () use ($rapport, $utilisateur) {
             $this->historique(
                 $utilisateur->id_utilisateur,
@@ -518,8 +588,11 @@ class RapportTacheController extends Controller
                 "Suppression du rapport #{$rapport->id_rapport}"
             );
 
+            $rapport->piecesJointes()->delete();
             $rapport->delete();
         });
+
+        Storage::disk('local')->delete($cheminsPieces);
 
         return response()->json([
             'success' => true,

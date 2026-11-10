@@ -24,6 +24,13 @@ class RolePermissions
      */
     public static function parRole(string $role): array
     {
+        $role = trim($role);
+        $role = match ($role) {
+            'Ressources humaines' => 'RH',
+            'Employé' => 'Employe',
+            default => $role,
+        };
+
         $voirDashboard = ['voir_dashboard'];
         $notifications = ['voir_notifications', 'marquer_notification_lue'];
 
@@ -35,7 +42,7 @@ class RolePermissions
                 'voir_taches', 'creer_tache', 'modifier_tache',
                 'supprimer_tache', 'assigner_tache', 'suivre_tache',
                 'terminer_tache', 'valider_tache',
-                'voir_demandes', 'modifier_demande',
+                'voir_demandes', 'voir_suivi_demandes', 'modifier_demande',
                 'traiter_demande', 'accepter_demande', 'refuser_demande',
                 'voir_rapports', 'valider_rapport', 'controler_rapport',
                 'voir_parametres',
@@ -45,7 +52,7 @@ class RolePermissions
                 'voir_employes', 'creer_employe', 'modifier_employe',
                 'supprimer_employe',
                 'voir_taches', 'suivre_tache',
-                'voir_demandes', 'creer_demande', 'modifier_demande',
+                'voir_demandes', 'voir_suivi_demandes', 'creer_demande', 'modifier_demande',
                 'traiter_demande', 'accepter_demande', 'refuser_demande',
                 'voir_rapports', 'creer_rapport', 'modifier_rapport',
                 'voir_parametres',
@@ -54,7 +61,7 @@ class RolePermissions
             'Responsable' => array_merge($voirDashboard, [
                 'voir_taches', 'creer_tache', 'modifier_tache',
                 'assigner_tache', 'suivre_tache', 'terminer_tache',
-                'voir_demandes', 'creer_demande', 'modifier_demande',
+                'voir_demandes', 'voir_suivi_demandes', 'creer_demande', 'modifier_demande',
                 'traiter_demande', 'accepter_demande', 'refuser_demande',
                 'voir_rapports', 'creer_rapport', 'modifier_rapport',
                 'valider_rapport',
@@ -65,7 +72,7 @@ class RolePermissions
                 'voir_employes',
                 'voir_taches', 'creer_tache', 'modifier_tache',
                 'assigner_tache', 'suivre_tache', 'terminer_tache',
-                'voir_demandes', 'creer_demande', 'modifier_demande',
+                'voir_demandes', 'voir_suivi_demandes', 'creer_demande', 'modifier_demande',
                 'traiter_demande', 'accepter_demande', 'refuser_demande',
                 'voir_rapports', 'creer_rapport', 'modifier_rapport',
                 'valider_rapport',
@@ -88,7 +95,7 @@ class RolePermissions
                 'voir_taches', 'creer_tache', 'modifier_tache',
                 'supprimer_tache', 'assigner_tache', 'suivre_tache',
                 'terminer_tache', 'valider_tache',
-                'voir_demandes', 'creer_demande', 'modifier_demande',
+                'voir_demandes', 'voir_suivi_demandes', 'creer_demande', 'modifier_demande',
                 'supprimer_demande', 'traiter_demande',
                 'accepter_demande', 'refuser_demande',
                 'voir_rapports', 'creer_rapport', 'modifier_rapport',

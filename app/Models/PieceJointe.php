@@ -14,6 +14,8 @@ class PieceJointe extends Model
 
     protected $primaryKey = 'id_piece';
 
+    protected $hidden = ['chemin', 'nom_stockage'];
+
     protected $fillable = [
         'id_tache',
         'id_rapport',

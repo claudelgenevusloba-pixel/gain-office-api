@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 use App\Support\RolePermissions;
+use App\Services\PhotoProfilService;
 use Throwable;
 
 class EmployeController extends Controller
@@ -147,7 +148,7 @@ class EmployeController extends Controller
     /**
      * Modifier un employé.
      */
-    public function update(Request $request, int $id): JsonResponse
+    public function update(Request $request, PhotoProfilService $photos, int $id): JsonResponse
     {
         RolePermissions::exiger(
             $request->user(),
@@ -211,12 +212,20 @@ class EmployeController extends Controller
             ])],
 
             'mot_de_passe' => ['nullable', 'string', 'min:6'],
+            'photo' => ['sometimes', 'nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
         ]);
 
+        $photoPath = null;
+        $anciennePhoto = $employe->utilisateur->photo;
+
         try {
-            DB::transaction(function () use ($employe, $validated) {
+            $photoPath = $photos->enregistrer($request->file('photo'));
+            DB::transaction(function () use ($employe, $validated, $photoPath) {
 
                 $utilisateurData = [];
+                if ($photoPath) {
+                    $utilisateurData['photo'] = $photoPath;
+                }
 
                 foreach ([
                     'id_role',
@@ -260,25 +269,29 @@ class EmployeController extends Controller
                     $employe->update($employeData);
                 }
             });
-
-            $employe->refresh()->load([
-                'utilisateur.role',
-                'poste.service',
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Employé modifié avec succès.',
-                'employe' => $employe,
-            ]);
-
         } catch (Throwable $e) {
+            $photos->supprimer($photoPath);
 
             return response()->json([
                 'success' => false,
                 'message' => 'Impossible de modifier l’employé.',
             ], 500);
         }
+
+        if ($photoPath) {
+            $photos->supprimer($anciennePhoto);
+        }
+
+        $employe->refresh()->load([
+            'utilisateur.role',
+            'poste.service',
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Employé modifié avec succès.',
+            'employe' => $employe,
+        ]);
     }
 
     /**

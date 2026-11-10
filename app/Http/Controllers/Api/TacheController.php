@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Historique;
+use App\Models\Message;
 use App\Models\Notification;
 use App\Models\Tache;
 use App\Models\Utilisateur;
@@ -35,6 +36,7 @@ class TacheController extends Controller
             ->with([
                 'createur:id_utilisateur,nom,prenom,email',
                 'assigne:id_utilisateur,nom,prenom,email',
+                'assigne.employe.poste.service',
             ])
             ->orderByDesc('created_at');
 
@@ -93,8 +95,9 @@ class TacheController extends Controller
         $tache = Tache::with([
             'createur:id_utilisateur,nom,prenom,email',
             'assigne:id_utilisateur,nom,prenom,email',
+            'assigne.employe.poste.service',
             'rapports',
-            'messages',
+            'messages.expediteur:id_utilisateur,nom,prenom',
             'piecesJointes',
         ])->findOrFail($id);
 
@@ -104,6 +107,87 @@ class TacheController extends Controller
             'success' => true,
             'tache' => $tache,
         ]);
+    }
+
+    /** Liste minimale des comptes actifs auxquels une tâche peut être assignée. */
+    public function assignables(Request $request): JsonResponse
+    {
+        $utilisateur = $request->user();
+
+        if (!$this->permission($utilisateur, 'assigner_tache')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Vous n’avez pas la permission d’assigner une tâche.',
+            ], 403);
+        }
+
+        $assignables = Utilisateur::query()
+            ->select(['id_utilisateur', 'id_role', 'nom', 'prenom', 'statut'])
+            ->with([
+                'role:id_role,nom',
+                'employe.poste.service:id_service,nom',
+            ])
+            ->where('statut', 'actif')
+            ->whereHas('role', function ($query) {
+                $query->whereRaw('LOWER(nom) <> ?', ['directeur']);
+            })
+            ->orderBy('prenom')
+            ->orderBy('nom')
+            ->get()
+            ->map(function (Utilisateur $personne) {
+                return [
+                    'id_utilisateur' => $personne->id_utilisateur,
+                    'nom' => $personne->nom,
+                    'prenom' => $personne->prenom,
+                    'role' => $personne->role?->nom,
+                    'service' => $personne->employe?->poste?->service?->nom,
+                ];
+            });
+
+        return response()->json([
+            'success' => true,
+            'assignables' => $assignables,
+        ]);
+    }
+
+    /** Enregistrer un commentaire dans la discussion persistante d’une tâche. */
+    public function ajouterMessage(Request $request, int $id): JsonResponse
+    {
+        $utilisateur = $request->user();
+
+        if (!$this->permission($utilisateur, 'voir_taches')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Vous n’avez pas la permission de discuter de cette tâche.',
+            ], 403);
+        }
+
+        $tache = Tache::findOrFail($id);
+        $this->verifierAccesTache($utilisateur, $tache);
+
+        $validated = $request->validate([
+            'contenu' => ['required', 'string', 'max:3000'],
+        ]);
+
+        $message = Message::create([
+            'id_tache' => $tache->id_tache,
+            'id_expediteur' => $utilisateur->id_utilisateur,
+            'contenu' => trim($validated['contenu']),
+            'lu' => false,
+        ])->load('expediteur:id_utilisateur,nom,prenom');
+
+        $this->enregistrerHistorique(
+            $utilisateur->id_utilisateur,
+            'creation',
+            'taches',
+            "Commentaire ajouté à la tâche #{$tache->id_tache}"
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Commentaire enregistré.',
+            'commentaire' => $message,
+        ], 201);
     }
 
     /**
@@ -260,6 +344,7 @@ class TacheController extends Controller
             'tache' => $tache->load([
                 'createur:id_utilisateur,nom,prenom,email',
                 'assigne:id_utilisateur,nom,prenom,email',
+                'assigne.employe.poste.service',
             ]),
         ], 201);
     }
@@ -416,6 +501,17 @@ class TacheController extends Controller
         if (array_key_exists('statut', $validated)) {
             $nouveauStatut = $validated['statut'];
 
+            if (
+                $role === 'employe' &&
+                in_array($nouveauStatut, ['en_cours', 'terminee'], true) &&
+                (int) $tache->id_assigne !== (int) $utilisateur->id_utilisateur
+            ) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Vous ne pouvez modifier que le statut de vos tâches assignées.',
+                ], 403);
+            }
+
             /*
              * Terminer une tâche.
              */
@@ -460,12 +556,18 @@ class TacheController extends Controller
                 'validee',
             ];
 
+            $demarrageParAssigne =
+                $role === 'employe' &&
+                $nouveauStatut === 'en_cours' &&
+                in_array($tache->statut, ['a_faire', 'correction_demandee'], true);
+
             if (
                 !in_array(
                     $nouveauStatut,
                     $statutsSpeciaux,
                     true
                 ) &&
+                !$demarrageParAssigne &&
                 !$this->permission(
                     $utilisateur,
                     'modifier_tache'
@@ -640,6 +742,7 @@ class TacheController extends Controller
             'tache' => $tache->load([
                 'createur:id_utilisateur,nom,prenom,email',
                 'assigne:id_utilisateur,nom,prenom,email',
+                'assigne.employe.poste.service',
             ]),
         ]);
     }/**

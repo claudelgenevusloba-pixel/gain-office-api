@@ -8,11 +8,12 @@ use App\Models\Employe;
 use App\Models\Invitation;
 use App\Models\Utilisateur;
 use App\Support\RolePermissions;
+use App\Services\PhotoProfilService;
+use App\Services\EmailDeliveryService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -23,7 +24,7 @@ class InvitationController extends Controller
     /**
      * Créer un employé et lui envoyer une invitation.
      */
-    public function store(Request $request): JsonResponse
+    public function store(Request $request, PhotoProfilService $photos, EmailDeliveryService $emailDelivery): JsonResponse
     {
         RolePermissions::exiger(
             $request->user(),
@@ -55,6 +56,7 @@ class InvitationController extends Controller
                 'integer',
                 Rule::exists('utilisateurs', 'id_utilisateur'),
             ],
+            'photo' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
         ]);
 
         $validated['email'] = strtolower(trim($validated['email']));
@@ -69,44 +71,53 @@ class InvitationController extends Controller
 
         $token = Str::random(64);
 
-        $resultat = DB::transaction(function () use (
-            $validated,
-            $token
-        ) {
-            $utilisateur = Utilisateur::create([
-                'id_role' => $validated['id_role'],
-                'id_responsable' => $validated['id_responsable'] ?? null,
-                'nom' => trim($validated['nom']),
-                'prenom' => trim($validated['prenom']),
-                'email' => $validated['email'],
-                'telephone' => $validated['telephone'] ?? null,
-                'mot_de_passe' => Hash::make(Str::random(80)),
-                'statut' => 'inactif',
-            ]);
+        $photoPath = null;
+        try {
+            $photoPath = $photos->enregistrer($request->file('photo'));
+            $resultat = DB::transaction(function () use (
+                $validated,
+                $token,
+                $photoPath
+            ) {
+                $utilisateur = Utilisateur::create([
+                    'id_role' => $validated['id_role'],
+                    'id_responsable' => $validated['id_responsable'] ?? null,
+                    'nom' => trim($validated['nom']),
+                    'prenom' => trim($validated['prenom']),
+                    'email' => $validated['email'],
+                    'telephone' => $validated['telephone'] ?? null,
+                    'photo' => $photoPath,
+                    'mot_de_passe' => Hash::make(Str::random(80)),
+                    'statut' => 'inactif',
+                ]);
 
-            $employe = Employe::create([
-                'id_utilisateur' => $utilisateur->id_utilisateur,
-                'id_poste' => $validated['id_poste'],
-                'matricule' => $validated['matricule'] ?? null,
-                'date_embauche' => $validated['date_embauche'] ?? null,
-                'date_naissance' => $validated['date_naissance'] ?? null,
-                'adresse' => $validated['adresse'] ?? null,
-                'ville' => $validated['ville'] ?? null,
-            ]);
+                $employe = Employe::create([
+                    'id_utilisateur' => $utilisateur->id_utilisateur,
+                    'id_poste' => $validated['id_poste'],
+                    'matricule' => $validated['matricule'] ?? null,
+                    'date_embauche' => $validated['date_embauche'] ?? null,
+                    'date_naissance' => $validated['date_naissance'] ?? null,
+                    'adresse' => $validated['adresse'] ?? null,
+                    'ville' => $validated['ville'] ?? null,
+                ]);
 
-            $invitation = Invitation::create([
-                'id_utilisateur' => $utilisateur->id_utilisateur,
-                'email' => $utilisateur->email,
-                'token' => hash('sha256', $token),
-                'expires_at' => now()->addHours(48),
-            ]);
+                $invitation = Invitation::create([
+                    'id_utilisateur' => $utilisateur->id_utilisateur,
+                    'email' => $utilisateur->email,
+                    'token' => hash('sha256', $token),
+                    'expires_at' => now()->addHours(48),
+                ]);
 
-            return [
-                'utilisateur' => $utilisateur,
-                'employe' => $employe,
-                'invitation' => $invitation,
-            ];
-        });
+                return [
+                    'utilisateur' => $utilisateur,
+                    'employe' => $employe,
+                    'invitation' => $invitation,
+                ];
+            });
+        } catch (Throwable $e) {
+            $photos->supprimer($photoPath);
+            throw $e;
+        }
 
         $activationUrl = rtrim(
             config('app.frontend_url', 'http://localhost:5173'),
@@ -114,7 +125,7 @@ class InvitationController extends Controller
         ) . '/activation-compte?token=' . urlencode($token);
 
         try {
-            Mail::to($resultat['utilisateur']->email)->send(
+            $emailDelivery->envoyer($resultat['utilisateur']->email,
                 new InvitationEmploye(
                     trim(
                         $resultat['utilisateur']->prenom . ' ' .
@@ -144,6 +155,7 @@ class InvitationController extends Controller
                 'id_employe' => $resultat['employe']->id_employe,
                 'email' => $resultat['utilisateur']->email,
                 'expires_at' => $resultat['invitation']->expires_at,
+                'activation_url' => $activationUrl,
             ],
         ], 201);
     }
@@ -151,7 +163,7 @@ class InvitationController extends Controller
     /**
      * Renvoyer une invitation à un employé existant.
      */
-    public function renvoyer(Request $request, int $id): JsonResponse
+    public function renvoyer(Request $request, EmailDeliveryService $emailDelivery, int $id): JsonResponse
     {
         RolePermissions::exiger(
             $request->user(),
@@ -189,7 +201,7 @@ class InvitationController extends Controller
         ) . '/activation-compte?token=' . urlencode($token);
 
         try {
-            Mail::to($utilisateur->email)->send(
+            $emailDelivery->envoyer($utilisateur->email,
                 new InvitationEmploye(
                     trim($utilisateur->prenom . ' ' . $utilisateur->nom),
                     $activationUrl,
@@ -222,6 +234,7 @@ class InvitationController extends Controller
                 'id_employe' => $employe->id_employe,
                 'email' => $utilisateur->email,
                 'expires_at' => $invitation->expires_at,
+                'activation_url' => $activationUrl,
             ],
         ]);
     }

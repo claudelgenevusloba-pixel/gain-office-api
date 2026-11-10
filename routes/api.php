@@ -260,6 +260,11 @@ Route::post(
     );
 
     Route::get(
+        '/taches/assignables',
+        [TacheController::class, 'assignables']
+    );
+
+    Route::get(
         '/taches/{id}',
         [TacheController::class, 'show']
     );
@@ -267,6 +272,11 @@ Route::post(
     Route::post(
         '/taches',
         [TacheController::class, 'store']
+    );
+
+    Route::post(
+        '/taches/{id}/messages',
+        [TacheController::class, 'ajouterMessage']
     );
 
     Route::put(
@@ -289,6 +299,11 @@ Route::post(
     Route::get(
         '/rapports-taches',
         [RapportTacheController::class, 'index']
+    );
+
+    Route::get(
+        '/rapports-taches/{id}/pieces-jointes/{idPiece}',
+        [RapportTacheController::class, 'telechargerPieceJointe']
     );
 
     Route::get(
